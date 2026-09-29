@@ -2,8 +2,10 @@
 
 Rendered manifests only. **CI writes. Argo CD reads. Humans review and merge.**
 
-Canonical spec: [`bo-platform/docs/BUILD-PLAN.md`](https://github.com/bo-jr/bo-platform/blob/main/docs/BUILD-PLAN.md)
-§4 (why this repo is shared), Phase 3 (promotion), Phase 6 scenario 5 (atomicity).
+Canonical spec: [`bo-platform/BUILD-PLAN.md`](https://github.com/bo-jr/bo-platform/blob/main/BUILD-PLAN.md)
+§4 (why this repo is shared), Phase 3 (promotion), Phase 6 scenario 5 (atomicity). Where it and
+[`bo-platform/DECISIONS.md`](https://github.com/bo-jr/bo-platform/blob/main/DECISIONS.md)
+disagree, `DECISIONS.md` wins.
 
 ## Read this before touching anything
 
@@ -48,13 +50,17 @@ Required, and the reason all seven repos are **public** — on a private free re
 rules are configured and then **silently not enforced**:
 
 - require a pull request before merging
-- require 1 approving review
-- **require approval from someone other than the last pusher**
+- **0 required approving reviews** — not the 1 BUILD-PLAN specifies. `bo-jr` is the sole
+  collaborator and GitHub does not let you approve your own PR, so 1 would make every
+  merge an admin bypass: the bypass becomes the normal path and the gate decoration
+  (DECISIONS 2026-09-12). Raise it when a second identity can approve — most likely
+  `cmd/promoter` opening prod PRs under its own token.
+- no force-push, no branch deletion
 - dismiss stale approvals on new commits
-- required status check: the dev-health check
-- **a status check that re-queries dev health at merge time** — otherwise a PR opened
-  Tuesday can be merged Thursday after dev has since degraded, and nothing catches it.
-  This is the most commonly missed piece of a promotion pipeline.
+- required status check: the dev-health check (added in Phase 3)
+- **a status check that re-queries dev health at merge time** (Phase 3) — otherwise a PR
+  opened Tuesday can be merged Thursday after dev has since degraded, and nothing catches
+  it. This is the most commonly missed piece of a promotion pipeline.
 
 Applied by `task repos:protect` from `bo-platform`, which loops one ruleset payload over
 all seven via `gh api`. A personal account has no account-level rulesets, so this is a
@@ -89,10 +95,10 @@ One PR per service, force-pushed to the latest digest — not one PR per commit.
 ## Non-negotiable (inherited from `bo-platform/CLAUDE.md`)
 
 - **No floating tags. Ever.** Every image reference here is a **manifest-list index
-  digest**. A per-arch digest pulls fine on one machine and fails `no match for platform`
-  on the other — and this repo is what both clusters actually apply.
+  digest**. CI renders on `linux/amd64` runners; every cluster that applies this repo is
+  `arm64`. A per-arch digest passes CI and fails `no match for platform` in the lab.
 - Every rendered manifest carries the **commit-timestamp annotation** stamped in Phase 3.
   It is what makes DORA lead time measurable; retrofitting it is painful.
 - **LF line endings**, enforced by `.gitattributes`.
 - If reality contradicts the plan, **stop and say so.** Record it in
-  `bo-platform/docs/DECISIONS.md`.
+  `bo-platform/DECISIONS.md`.
