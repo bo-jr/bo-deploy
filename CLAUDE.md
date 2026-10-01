@@ -15,9 +15,15 @@ soak, the reconciler — exists to make the decision at this merge button an inf
 
 ```
 rendered/
-├── dev/<service>/      <- written by GitHub Actions on merge to a service repo
-└── prod/<service>/     <- written by cmd/promoter after the soak passes
+├── dev/<service>/manifests.yaml    <- written by GitHub Actions on a push to a service's main
+└── prod/<service>/manifests.yaml   <- written by cmd/promoter after the soak passes
+                                       (the promoter slice, after Phase 7)
 ```
+
+Each `manifests.yaml` is byte for byte what `helm template` emits for the pinned chart
+archive (`bo-platform/scripts/render-service.sh`, the lab's one render path). Argo CD's
+`services` ApplicationSet in bo-platform turns each `rendered/<env>/<service>/` directory
+into one Application.
 
 ## Never hand-edit `rendered/`
 
@@ -57,14 +63,35 @@ rules are configured and then **silently not enforced**:
   `cmd/promoter` opening prod PRs under its own token.
 - no force-push, no branch deletion
 - dismiss stale approvals on new commits
-- required status check: the dev-health check (added in Phase 3)
-- **a status check that re-queries dev health at merge time** (Phase 3) — otherwise a PR
-  opened Tuesday can be merged Thursday after dev has since degraded, and nothing catches
-  it. This is the most commonly missed piece of a promotion pipeline.
+- **required check `validate / rendered`** (Phase 3, below). Without a required check,
+  `gh pr merge --auto` merges a PR the moment it opens, so auto-merge would gate nothing
+  (DECISIONS 2026-09-30).
+- **a `dev-health` status that re-queries dev at merge time** (the promoter slice, after
+  Phase 7) — otherwise a PR opened Tuesday can be merged Thursday after dev has since
+  degraded, and nothing catches it. This is the most commonly missed piece of a promotion
+  pipeline. Hosted runners cannot reach the lab, so it is a commit status the in-cluster
+  promoter refreshes on every run, not an Actions job.
 
-Applied by `task repos:protect` from `bo-platform`, which loops one ruleset payload over
-all seven via `gh api`. A personal account has no account-level rulesets, so this is a
-seven-time setup. **`bo-deploy` is the one you would otherwise get wrong.**
+`main-protection` is applied by `task repos:protect` from `bo-platform`, which loops one
+ruleset payload over all seven via `gh api`. A personal account has no account-level
+rulesets, so this is a seven-time setup. **`bo-deploy` is the one you would otherwise get
+wrong**, and it alone also carries `deploy-checks` (`task repos:protect:deploy-checks`),
+the ruleset that makes `validate` required.
+
+## The `validate` check
+
+`.github/workflows/validate.yml` calls `deploy-validate.yml` in bo-platform, pinned by
+commit SHA. On every PR it requires:
+
+1. only CI's `dev/<service>` branch changes `rendered/`, and only `rendered/dev/<service>/`
+   — so "never hand-edit `rendered/`" is enforced, not just asked;
+2. every rendered manifest passes the lab's Kyverno policies (digest-only images, no
+   floating tags, explicit requests and limits);
+3. every changed image resolves **anonymously** — how the clusters pull — as an OCI index
+   of exactly `linux/amd64` + `linux/arm64`;
+4. every changed image is cosign-signed by bo-platform's `service-ci.yml`, called by SHA,
+   from that image's own service repo;
+5. every workload carries a well-formed `gitops-lab/commit-timestamp`.
 
 ## What promotion actually reads
 
@@ -82,6 +109,14 @@ where you must promote what passed, not what was requested.
 One PR per service, force-pushed to the latest digest — not one PR per commit. Expect
 `synchronize` events on already-open PRs; that noise is known and documented in Phase 4.
 
+The dev PR's branch is `dev/<service>` and its title `dev: <service> <short sha>`. The PR
+body carries the source commit, commit timestamp, index digest, chart digest, the run
+link and copy-paste `cosign verify` / `gh attestation verify` commands — the only place
+a SHA or digest appears outside `image:`. CI enables auto-merge (squash) and waits; if
+the PR has not merged within the timeout, **the service's run fails**, on the repo that
+is being watched. Promotions are serialized per service and never go backwards: a run
+whose commit is no longer the tip of its `main` stands aside.
+
 ## What must never live here
 
 - Source code, Dockerfiles, or Helm charts
@@ -97,8 +132,9 @@ One PR per service, force-pushed to the latest digest — not one PR per commit.
 - **No floating tags. Ever.** Every image reference here is a **manifest-list index
   digest**. CI renders on `linux/amd64` runners; every cluster that applies this repo is
   `arm64`. A per-arch digest passes CI and fails `no match for platform` in the lab.
-- Every rendered manifest carries the **commit-timestamp annotation** stamped in Phase 3.
-  It is what makes DORA lead time measurable; retrofitting it is painful.
+- Every rendered workload carries **`gitops-lab/commit-timestamp`** (RFC3339, UTC) on its
+  own metadata, stamped by the chart in Phase 3 — not on the pod template, Service or
+  ServiceAccount. It is what makes DORA lead time measurable; retrofitting it is painful.
 - **LF line endings**, enforced by `.gitattributes`.
 - If reality contradicts the plan, **stop and say so.** Record it in
   `bo-platform/DECISIONS.md`.
