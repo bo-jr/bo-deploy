@@ -1,0 +1,133 @@
+---
+# Source: service/templates/serviceaccount.yaml
+# One identity per service. Istio AuthorizationPolicy (Phase 5) keys on this
+# ServiceAccount's SPIFFE ID, never on IPs or labels.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+    version: v1
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/version: v1
+    app.kubernetes.io/part-of: gitops-lab
+    helm.sh/chart: service-0.2.0
+automountServiceAccountToken: false
+
+---
+# Source: service/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+    version: v1
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/version: v1
+    app.kubernetes.io/part-of: gitops-lab
+    helm.sh/chart: service-0.2.0
+spec:
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+      # Tells Istio (Phase 5) this is HTTP without protocol sniffing.
+      appProtocol: http
+
+---
+# Source: service/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+    version: v1
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/version: v1
+    app.kubernetes.io/part-of: gitops-lab
+    helm.sh/chart: service-0.2.0
+  # On the workload only: never the pod template, so a new timestamp alone
+  # never restarts pods, and never the Service or ServiceAccount, so they do
+  # not diff between builds. The DORA exporter reads it here (Phase 7).
+  annotations:
+    gitops-lab/commit-timestamp: "2026-10-01T21:47:08Z"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+        version: v1
+        app.kubernetes.io/name: storefront
+        app.kubernetes.io/version: v1
+        app.kubernetes.io/part-of: gitops-lab
+        helm.sh/chart: service-0.2.0
+    spec:
+      serviceAccountName: storefront
+      automountServiceAccountToken: false
+      # >= the kit's shutdown budget: 5s readiness drain + 20s request grace +
+      # 5s trace flush.
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: storefront
+          # Always repository@digest. There is no tag field to fill in.
+          image: "ghcr.io/bo-jr/bo-storefront@sha256:caf45b45303588b095eb95af11b4ee27642d5dd5a02f89ee6fe9abdbacdc4d84"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: APP_VERSION
+              value: "v1"
+            - name: DEPENDENCIES
+              value: "catalog,pricing"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: ""
+            - name: EXTRA_LATENCY_MS
+              value: "0"
+            - name: FAILURE_RATE
+              value: "0"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
