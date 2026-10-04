@@ -56,7 +56,7 @@ metadata:
   # never restarts pods, and never the Service or ServiceAccount, so they do
   # not diff between builds. The DORA exporter reads it here (Phase 7).
   annotations:
-    gitops-lab/commit-timestamp: "2026-10-01T21:47:08Z"
+    gitops-lab/commit-timestamp: "2026-10-04T08:11:23Z"
 spec:
   replicas: 1
   revisionHistoryLimit: 3
@@ -85,7 +85,7 @@ spec:
       containers:
         - name: storefront
           # Always repository@digest. There is no tag field to fill in.
-          image: "ghcr.io/bo-jr/bo-storefront@sha256:caf45b45303588b095eb95af11b4ee27642d5dd5a02f89ee6fe9abdbacdc4d84"
+          image: "ghcr.io/bo-jr/bo-storefront@sha256:b974c04cf52597a9df8663b79b858ca7eaeedebac1532234948986fb2df44b2f"
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
